@@ -312,6 +312,7 @@ cmd:
 module with given failure string
   <action>                                   ;; perform action and print results
   <assertion>                                ;; assert result of an action
+  ( thread <name>? <action> )                ;; spawn a new thread and run an action
   <meta>                                     ;; meta command
 
 module:
@@ -322,16 +323,24 @@ module:
 action:
   ( invoke <name>? <string> <expr>* )        ;; invoke function export
   ( get <name>? <string> )                   ;; get global export
+  ( join <name> )                            ;; join named thread and return its value
 
 assertion:
-  ( assert_return <action> <expr>* )         ;; assert action has expected results
-  ( assert_return_canonical_nan <action> )   ;; assert action results in NaN in a canonical form
-  ( assert_return_arithmetic_nan <action> )  ;; assert action results in NaN with 1 in MSB of fraction field
+  ( assert_return <action> <result>* )       ;; assert action has expected results
   ( assert_trap <action> <failure> )         ;; assert action traps with given failure string
+  ( assert_exhaustion <action> <failure> )   ;; assert action exhausts system resources
   ( assert_malformed <module> <failure> )    ;; assert module cannot be decoded with given failure string
   ( assert_invalid <module> <failure> )      ;; assert module is invalid with given failure string
   ( assert_unlinkable <module> <failure> )   ;; assert module fails to link
   ( assert_trap <module> <failure> )         ;; assert module traps on instantiation
+
+result:
+  ( <val_type>.const <numpat> )
+
+numpat:
+  <value>                                    ;; literal result
+  nan:canonical                              ;; NaN in canonical form
+  nan:arithmetic                             ;; NaN with 1 in MSB of payload
 
 meta:
   ( script <name>? <script> )                ;; name a subscript

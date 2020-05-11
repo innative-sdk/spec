@@ -30,6 +30,8 @@ sig
   type bits
   val pos_nan : t
   val neg_nan : t
+  val is_inf : t -> bool
+  val is_nan : t -> bool
   val of_float : float -> t
   val to_float : t -> float
   val of_string : string -> t
@@ -265,6 +267,7 @@ struct
       let m = logor (logand bits 0xf_ffff_ffff_ffffL) 0x10_0000_0000_0000L in
       (* Shift mantissa to match msb position in most significant hex digit *)
       let i = skip_zeroes (String.uppercase s) 0 in
+      if i = String.length s then Printf.sprintf "%.*g" (String.length s) z else
       let sh =
         match s.[i] with '1' -> 0 | '2'..'3' -> 1 | '4'..'7' -> 2 | _ -> 3 in
       Printf.sprintf "%Lx" (shift_left m sh)
@@ -296,7 +299,7 @@ struct
       else
         Rep.logor x bare_nan
     else
-      (* TODO: once we update past 4.02, replace buffer hack with this
+      (* TODO(ocmal-4.03): replace buffer hack with this:
       let s' = String.concat "" (String.split_on_char '_' s) in
       *)
       let buf = Buffer.create (String.length s) in
@@ -348,7 +351,6 @@ struct
       let payload = Rep.logand (abs x) (Rep.lognot bare_nan) in
       "nan:0x" ^ Rep.to_hex_string payload
     else
-      (* TODO: use sprintf "%h" once we have upgraded to OCaml 4.03 *)
-      let s = string_of_float (to_float (abs x)) in
+      let s = Printf.sprintf "%.17g" (to_float (abs x)) in
       group_digits (if s.[String.length s - 1] = '.' then s ^ "0" else s)
 end
