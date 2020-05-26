@@ -39,6 +39,14 @@ let ati i =
 let literal f s =
   try f s with Failure _ -> error s.at "constant out of range"
 
+let nanop f nan =
+  let open Source in
+  let open Values in
+  match snd (f ("0" @@ no_region)) with
+  | F32 _ -> F32 nan.it @@ nan.at
+  | F64 _ -> F64 nan.it @@ nan.at
+  | I32 _ | I64 _ -> error nan.at "NaN pattern with non-float type"
+
 let nat s at =
   try
     let n = int_of_string s in
@@ -145,19 +153,22 @@ let inline_type_explicit (c : context) x ft at =
 
 %}
 
-%token NAT INT FLOAT STRING VAR VALUE_TYPE FUNCREF MUT LPAR RPAR
+%token NAT INT FLOAT STRING VAR VALUE_TYPE FUNCREF MUT SHARED LPAR RPAR
 %token NOP DROP BLOCK END IF THEN ELSE SELECT LOOP BR BR_IF BR_TABLE
 %token CALL CALL_INDIRECT RETURN
 %token LOCAL_GET LOCAL_SET LOCAL_TEE GLOBAL_GET GLOBAL_SET
 %token LOAD STORE OFFSET_EQ_NAT ALIGN_EQ_NAT
+%token MEMORY_ATOMIC_WAIT MEMORY_ATOMIC_NOTIFY
+%token ATOMIC_LOAD ATOMIC_STORE ATOMIC_RMW ATOMIC_RMW_CMPXCHG
 %token CONST UNARY BINARY TEST COMPARE CONVERT
 %token UNREACHABLE MEMORY_SIZE MEMORY_GROW
 %token FUNC START TYPE PARAM RESULT LOCAL GLOBAL
 %token TABLE ELEM MEMORY DATA OFFSET IMPORT EXPORT TABLE
 %token MODULE BIN QUOTE
-%token SCRIPT REGISTER INVOKE GET
+%token SCRIPT REGISTER THREAD JOIN INVOKE GET
 %token ASSERT_MALFORMED ASSERT_INVALID ASSERT_SOFT_INVALID ASSERT_UNLINKABLE
-%token ASSERT_RETURN ASSERT_RETURN_CANONICAL_NAN ASSERT_RETURN_ARITHMETIC_NAN ASSERT_TRAP ASSERT_EXHAUSTION
+%token ASSERT_RETURN ASSERT_TRAP ASSERT_EXHAUSTION
+%token NAN
 %token INPUT OUTPUT
 %token EOF
 
@@ -175,8 +186,16 @@ let inline_type_explicit (c : context) x ft at =
 %token<Ast.instr'> CONVERT
 %token<int option -> Memory.offset -> Ast.instr'> LOAD
 %token<int option -> Memory.offset -> Ast.instr'> STORE
+%token<int option -> Memory.offset -> Ast.instr'> MEMORY_ATOMIC_WAIT
+%token<int option -> Memory.offset -> Ast.instr'> MEMORY_ATOMIC_NOTIFY
+%token<int option -> Memory.offset -> Ast.instr'> ATOMIC_LOAD
+%token<int option -> Memory.offset -> Ast.instr'> ATOMIC_STORE
+%token<int option -> Memory.offset -> Ast.instr'> ATOMIC_RMW
+%token<int option -> Memory.offset -> Ast.instr'> ATOMIC_RMW_CMPXCHG
 %token<string> OFFSET_EQ_NAT
 %token<string> ALIGN_EQ_NAT
+
+%token<Script.nan> NAN
 
 %nonassoc LOW
 %nonassoc VAR
@@ -230,7 +249,8 @@ table_type :
   | limits elem_type { TableType ($1, $2) }
 
 memory_type :
-  | limits { MemoryType $1 }
+  | limits { MemoryType ($1, Unshared) }
+  | limits SHARED { MemoryType ($1, Shared) }
 
 limits :
   | NAT { {min = nat32 $1 (ati 1); max = None} }
@@ -325,6 +345,12 @@ plain_instr :
   | UNARY { fun c -> $1 }
   | BINARY { fun c -> $1 }
   | CONVERT { fun c -> $1 }
+  | MEMORY_ATOMIC_WAIT offset_opt align_opt { fun c -> $1 $3 $2 }
+  | MEMORY_ATOMIC_NOTIFY offset_opt align_opt { fun c -> $1 $3 $2 }
+  | ATOMIC_LOAD offset_opt align_opt { fun c -> $1 $3 $2 }
+  | ATOMIC_STORE offset_opt align_opt { fun c -> $1 $3 $2 }
+  | ATOMIC_RMW offset_opt align_opt { fun c -> $1 $3 $2 }
+  | ATOMIC_RMW_CMPXCHG offset_opt align_opt { fun c -> $1 $3 $2 }
 
 
 call_instr :
@@ -609,7 +635,7 @@ memory_fields :
   | LPAR DATA string_list RPAR  /* Sugar */
     { fun c x at ->
       let size = Int32.(div (add (of_int (String.length $3)) 65535l) 65536l) in
-      [{mtype = MemoryType {min = size; max = Some size}} @@ at],
+      [{mtype = MemoryType ({min = size; max = Some size}, Unshared)} @@ at],
       [{index = x;
         offset = [i32_const (0l @@ at) @@ at] @@ at; init = $3} @@ at],
       [], [] }
@@ -766,8 +792,14 @@ inline_module :  /* Sugar */
 inline_module1 :  /* Sugar */
   | module_fields1 { Textual ($1 (empty_context ()) () @@ at ()) @@ at () }
 
-
 /* Scripts */
+
+thread_var_opt :
+  | /* empty */ { None }
+  | thread_var { Some $1 }
+
+thread_var :
+  | VAR { $1 @@ at () }
 
 script_var_opt :
   | /* empty */ { None }
@@ -785,6 +817,8 @@ action :
     { Invoke ($3, $4, $5) @@ at () }
   | LPAR GET module_var_opt name RPAR
     { Get ($3, $4) @@ at() }
+  | LPAR JOIN thread_var RPAR
+    { Join $3 @@ at () }
 
 assertion :
   | LPAR ASSERT_MALFORMED script_module STRING RPAR
@@ -795,17 +829,20 @@ assertion :
     { AssertUnlinkable (snd $3, $4) @@ at () }
   | LPAR ASSERT_TRAP script_module STRING RPAR
     { AssertUninstantiable (snd $3, $4) @@ at () }
-  | LPAR ASSERT_RETURN action const_list RPAR { AssertReturn ($3, $4) @@ at () }
-  | LPAR ASSERT_RETURN_CANONICAL_NAN action RPAR { AssertReturnCanonicalNaN $3 @@ at () }
-  | LPAR ASSERT_RETURN_ARITHMETIC_NAN action RPAR { AssertReturnArithmeticNaN $3 @@ at () }
+  | LPAR ASSERT_RETURN action result_list RPAR { AssertReturn ($3, $4) @@ at () }
   | LPAR ASSERT_TRAP action STRING RPAR { AssertTrap ($3, $4) @@ at () }
   | LPAR ASSERT_EXHAUSTION action STRING RPAR { AssertExhaustion ($3, $4) @@ at () }
+
+assertion_list :
+  | /* empty */ { [] }
+  | assertion assertion_list { $1 :: $2 }
 
 cmd :
   | action { Action $1 @@ at () }
   | assertion { Assertion $1 @@ at () }
   | script_module { Module (fst $1, snd $1) @@ at () }
   | LPAR REGISTER name module_var_opt RPAR { Register ($3, $4) @@ at () }
+  | LPAR THREAD thread_var_opt action RPAR { Thread ($3, $4) @@ at () }
   | meta { Meta $1 @@ at () }
 
 cmd_list :
@@ -824,6 +861,14 @@ const :
 const_list :
   | /* empty */ { [] }
   | const const_list { $1 :: $2 }
+
+result :
+  | const { LitResult $1 @@ at () }
+  | LPAR CONST NAN RPAR { NanResult (nanop $2 ($3 @@ ati 3)) @@ at () }
+
+result_list :
+  | /* empty */ { [] }
+  | result result_list { $1 :: $2 }
 
 script :
   | cmd_list EOF { $1 }

@@ -98,8 +98,8 @@ Table Types
 Memory Types
 ~~~~~~~~~~~~
 
-:math:`\limits`
-...............
+:math:`\limits~\share`
+......................
 
 * The limits :math:`\limits` must be :ref:`valid <valid-limits>` within range :math:`2^{16}`.
 
@@ -109,7 +109,7 @@ Memory Types
    \frac{
      \vdashlimits \limits : 2^{16}
    }{
-     \vdashmemtype \limits \ok
+     \vdashmemtype \limits~\share \ok
    }
 
 

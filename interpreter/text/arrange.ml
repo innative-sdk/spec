@@ -196,20 +196,77 @@ let extension = function
   | Memory.SX -> "_s"
   | Memory.ZX -> "_u"
 
-let memop name {ty; align; offset; _} =
-  value_type ty ^ "." ^ name ^
+let wait_size = function
+  | I32Type -> "32"
+  | I64Type -> "64"
+  | _ -> assert false
+
+let rmw = function
+  | I32 I32Op.RmwAdd | I64 I64Op.RmwAdd -> "add"
+  | I32 I32Op.RmwSub | I64 I64Op.RmwSub -> "sub"
+  | I32 I32Op.RmwAnd | I64 I64Op.RmwAnd -> "and"
+  | I32 I32Op.RmwOr | I64 I64Op.RmwOr -> "or"
+  | I32 I32Op.RmwXor | I64 I64Op.RmwXor -> "xor"
+  | I32 I32Op.RmwXchg | I64 I64Op.RmwXchg -> "xchg"
+  | _ -> assert false
+
+let memop_without_type name {ty; align; offset; _} sz =
+  name ^
   (if offset = 0l then "" else " offset=" ^ nat32 offset) ^
-  (if 1 lsl align = size ty then "" else " align=" ^ nat (1 lsl align))
+  (if 1 lsl align = sz then "" else " align=" ^ nat (1 lsl align))
+
+let memop name ma sz =
+  let {ty; _} = ma in
+  value_type ty ^ "." ^ memop_without_type name ma sz
 
 let loadop op =
   match op.sz with
-  | None -> memop "load" op
-  | Some (sz, ext) -> memop ("load" ^ pack_size sz ^ extension ext) op
+  | None -> memop "load" op (size op.ty)
+  | Some (sz, ext) ->
+    memop ("load" ^ pack_size sz ^ extension ext) op (Memory.packed_size sz)
 
 let storeop op =
   match op.sz with
-  | None -> memop "store" op
-  | Some sz -> memop ("store" ^ pack_size sz) op
+  | None -> memop "store" op (size op.ty)
+  | Some sz -> memop ("store" ^ pack_size sz) op (Memory.packed_size sz)
+
+let memoryatomicwaitop op =
+  match op.sz with
+  | None ->
+    memop_without_type ("memory.atomic.wait" ^ (wait_size op.ty)) op
+      (size op.ty)
+  | Some sz -> assert false
+
+let memoryatomicnotifyop op =
+  match op.sz with
+  | None -> memop_without_type "memory.atomic.notify" op (size op.ty)
+  | Some sz -> assert false
+
+let atomicloadop op =
+  match op.sz with
+  | None -> memop "atomic.load" op (size op.ty)
+  | Some sz ->
+    memop ("atomic.load" ^ pack_size sz ^ "_u") op (Memory.packed_size sz)
+
+let atomicstoreop op =
+  match op.sz with
+  | None -> memop "atomic.store" op (size op.ty)
+  | Some sz ->
+    memop ("atomic.store" ^ pack_size sz) op (Memory.packed_size sz)
+
+let atomicrmwop op rmwop =
+  match op.sz with
+  | None -> memop ("atomic.rmw." ^ rmw rmwop) op (size op.ty)
+  | Some sz ->
+    memop ("atomic.rmw" ^ pack_size sz ^ "." ^ rmw rmwop ^ "_u") op
+      (Memory.packed_size sz)
+
+let atomicrmwcmpxchgop op =
+  match op.sz with
+  | None -> memop "atomic.rmw.cmpxchg" op (size op.ty)
+  | Some sz ->
+    memop ("atomic.rmw" ^ pack_size sz ^ ".cmpxchg_u") op
+      (Memory.packed_size sz)
 
 
 (* Expressions *)
@@ -252,6 +309,12 @@ let rec instr e =
     | Unary op -> unop op, []
     | Binary op -> binop op, []
     | Convert op -> cvtop op, []
+    | MemoryAtomicWait op -> memoryatomicwaitop op, []
+    | MemoryAtomicNotify op -> memoryatomicnotifyop op, []
+    | AtomicLoad op -> atomicloadop op, []
+    | AtomicStore op -> atomicstoreop op, []
+    | AtomicRmw (rmwop, op) -> atomicrmwop op rmwop, []
+    | AtomicRmwCmpXchg op -> atomicrmwcmpxchgop op, []
   in Node (head, inner)
 
 let const c =
@@ -285,9 +348,13 @@ let table off i tab =
     [atom elem_type t]
   )
 
+let memory_type = function
+  | MemoryType (lim, Unshared) -> atom (limits nat32) lim
+  | MemoryType (lim, Shared) -> Atom (limits nat32 lim ^ " shared")
+
 let memory off i mem =
-  let {mtype = MemoryType lim} = mem.it in
-  Node ("memory $" ^ nat (off + i) ^ " " ^ limits nat32 lim, [])
+  let {mtype} = mem.it in
+  Node ("memory $" ^ nat (off + i), [memory_type mtype])
 
 let segment head dat seg =
   let {index; offset; init} = seg.it in
@@ -305,18 +372,21 @@ let data seg =
 let typedef i ty =
   Node ("type $" ^ nat i, [struct_type ty.it])
 
-let import_desc i d =
+let import_desc fx tx mx gx d =
   match d.it with
   | FuncImport x ->
-    Node ("func $" ^ nat i, [Node ("type", [atom var x])])
-  | TableImport t -> table 0 i ({ttype = t} @@ d.at)
-  | MemoryImport t -> memory 0 i ({mtype = t} @@ d.at)
-  | GlobalImport t -> Node ("global $" ^ nat i, [global_type t])
+    incr fx; Node ("func $" ^ nat (!fx - 1), [Node ("type", [atom var x])])
+  | TableImport t ->
+    incr tx; table 0 (!tx - 1) ({ttype = t} @@ d.at)
+  | MemoryImport t ->
+    incr mx; memory 0 (!mx - 1) ({mtype = t} @@ d.at)
+  | GlobalImport t ->
+    incr gx; Node ("global $" ^ nat (!gx - 1), [global_type t])
 
-let import i im =
+let import fx tx mx gx im =
   let {module_name; item_name; idesc} = im.it in
   Node ("import",
-    [atom name module_name; atom name item_name; import_desc i idesc]
+    [atom name module_name; atom name item_name; import_desc fx tx mx gx idesc]
   )
 
 let export_desc d =
@@ -341,30 +411,19 @@ let var_opt = function
   | None -> ""
   | Some x -> " " ^ x.it
 
-let is_func_import im =
-  match im.it.idesc.it with FuncImport _ -> true | _ -> false
-let is_table_import im =
-  match im.it.idesc.it with TableImport _ -> true | _ -> false
-let is_memory_import im =
-  match im.it.idesc.it with MemoryImport _ -> true | _ -> false
-let is_global_import im =
-  match im.it.idesc.it with GlobalImport _ -> true | _ -> false
-
 let module_with_var_opt x_opt m =
-  let func_imports = List.filter is_func_import m.it.imports in
-  let table_imports = List.filter is_table_import m.it.imports in
-  let memory_imports = List.filter is_memory_import m.it.imports in
-  let global_imports = List.filter is_global_import m.it.imports in
+  let fx = ref 0 in
+  let tx = ref 0 in
+  let mx = ref 0 in
+  let gx = ref 0 in
+  let imports = list (import fx tx mx gx) m.it.imports in
   Node ("module" ^ var_opt x_opt,
     listi typedef m.it.types @
-    listi import table_imports @
-    listi import memory_imports @
-    listi import global_imports @
-    listi import func_imports @
-    listi (table (List.length table_imports)) m.it.tables @
-    listi (memory (List.length memory_imports)) m.it.memories @
-    listi (global (List.length global_imports)) m.it.globals @
-    listi (func_with_index (List.length func_imports)) m.it.funcs @
+    imports @
+    listi (table !tx) m.it.tables @
+    listi (memory !mx) m.it.memories @
+    listi (global !gx) m.it.globals @
+    listi (func_with_index !fx) m.it.funcs @
     list export m.it.exports @
     opt start m.it.start @
     list elems m.it.elems @
@@ -391,23 +450,26 @@ let literal lit =
 
 let definition mode x_opt def =
   try
-    match mode, def.it with
-    | `Textual, _ | `Original, Textual _ ->
+    match mode with
+    | `Textual ->
       let rec unquote def =
         match def.it with
         | Textual m -> m
         | Encoded (_, bs) -> Decode.decode "" bs
         | Quoted (_, s) -> unquote (Parse.string_to_module s)
       in module_with_var_opt x_opt (unquote def)
-    | `Binary, _ | `Original, Encoded _ ->
+    | `Binary ->
       let rec unquote def =
         match def.it with
         | Textual m -> Encode.encode m
-        | Encoded (_, bs) -> bs
+        | Encoded (_, bs) -> Encode.encode (Decode.decode "" bs)
         | Quoted (_, s) -> unquote (Parse.string_to_module s)
       in binary_module_with_var_opt x_opt (unquote def)
-    | `Original, Quoted (_, s) ->
-      quoted_module_with_var_opt x_opt s
+    | `Original ->
+      match def.it with
+      | Textual m -> module_with_var_opt x_opt m
+      | Encoded (_, bs) -> binary_module_with_var_opt x_opt bs
+      | Quoted (_, s) -> quoted_module_with_var_opt x_opt s
   with Parse.Syntax _ ->
     quoted_module_with_var_opt x_opt "<invalid module>"
 
@@ -420,6 +482,21 @@ let action act =
     Node ("invoke" ^ access x_opt name, List.map literal lits)
   | Get (x_opt, name) ->
     Node ("get" ^ access x_opt name, [])
+  | Join x ->
+    Node ("join " ^ x.it, [])
+
+let nan = function
+  | CanonicalNan -> "nan:canonical"
+  | ArithmeticNan -> "nan:arithmetic"
+
+let result res =
+  match res.it with
+  | LitResult lit -> literal lit
+  | NanResult nanop ->
+    match nanop.it with
+    | Values.I32 _ | Values.I64 _ -> assert false
+    | Values.F32 n -> Node ("f32.const " ^ nan n, [])
+    | Values.F64 n -> Node ("f64.const " ^ nan n, [])
 
 let assertion mode ass =
   match ass.it with
@@ -431,12 +508,8 @@ let assertion mode ass =
     Node ("assert_unlinkable", [definition mode None def; Atom (string re)])
   | AssertUninstantiable (def, re) ->
     Node ("assert_trap", [definition mode None def; Atom (string re)])
-  | AssertReturn (act, lits) ->
-    Node ("assert_return", action act :: List.map literal lits)
-  | AssertReturnCanonicalNaN act ->
-    Node ("assert_return_canonical_nan", [action act])
-  | AssertReturnArithmeticNaN act ->
-    Node ("assert_return_arithmetic_nan", [action act])
+  | AssertReturn (act, results) ->
+    Node ("assert_return", action act :: List.map result results)
   | AssertTrap (act, re) ->
     Node ("assert_trap", [action act; Atom (string re)])
   | AssertExhaustion (act, re) ->
@@ -449,6 +522,7 @@ let command mode cmd =
     Node ("register " ^ name n ^ var_opt x_opt, [])
   | Action act -> action act
   | Assertion ass -> assertion mode ass
+  | Thread (x_opt, act) -> Node ("thread " ^ var_opt x_opt, [action act])
   | Meta _ -> assert false
 
 let script mode scr = List.map (command mode) scr

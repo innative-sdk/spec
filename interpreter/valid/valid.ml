@@ -288,6 +288,30 @@ let rec check_instr (c : context) (e : instr) (s : infer_stack_type) : op_type =
     let t1, t2 = type_cvtop e.at cvtop in
     [t1] --> [t2]
 
+  | MemoryAtomicNotify memop ->
+    check_memop c memop (fun sz -> sz) e.at;
+    [I32Type; I32Type] --> [I32Type]
+
+  | MemoryAtomicWait memop ->
+    check_memop c memop (fun sz -> sz) e.at;
+    [I32Type; memop.ty; I64Type] --> [I32Type]
+
+  | AtomicLoad memop ->
+    check_memop c memop (fun sz -> sz) e.at;
+    [I32Type] --> [memop.ty]
+
+  | AtomicStore memop ->
+    check_memop c memop (fun sz -> sz) e.at;
+    [I32Type; memop.ty] --> []
+
+  | AtomicRmw (rmwop, memop) ->
+    check_memop c memop (fun sz -> sz) e.at;
+    [I32Type; memop.ty] --> [memop.ty]
+
+  | AtomicRmwCmpXchg memop ->
+    check_memop c memop (fun sz -> sz) e.at;
+    [I32Type; memop.ty; memop.ty] --> [memop.ty]
+
 and check_seq (c : context) (es : instr list) : infer_stack_type =
   match es with
   | [] ->
@@ -332,9 +356,11 @@ let check_table_type (tt : table_type) at =
   check_limits lim 0x1_0000_0000L at "table size must be at most 2^32"
 
 let check_memory_type (mt : memory_type) at =
-  let MemoryType lim = mt in
+  let MemoryType (lim, shared) = mt in
   check_limits lim 0x1_0000L at
-    "memory size must be at most 65536 pages (4GiB)"
+    "memory size must be at most 65536 pages (4GiB)";
+  require (shared = Unshared || lim.max <> None) at
+    "shared memory must have maximum"
 
 let check_global_type (gt : global_type) at =
   let GlobalType (t, mut) = gt in

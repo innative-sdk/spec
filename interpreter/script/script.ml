@@ -10,6 +10,16 @@ type action = action' Source.phrase
 and action' =
   | Invoke of var option * Ast.name * Ast.literal list
   | Get of var option * Ast.name
+  | Join of var
+
+type nanop = nanop' Source.phrase
+and nanop' = (unit, unit, nan, nan) Values.op
+and nan = CanonicalNan | ArithmeticNan
+
+type result = result' Source.phrase
+and result' =
+  | LitResult of Ast.literal
+  | NanResult of nanop
 
 type assertion = assertion' Source.phrase
 and assertion' =
@@ -17,9 +27,7 @@ and assertion' =
   | AssertInvalid of definition * string
   | AssertUnlinkable of definition * string
   | AssertUninstantiable of definition * string
-  | AssertReturn of action * Ast.literal list
-  | AssertReturnCanonicalNaN of action
-  | AssertReturnArithmeticNaN of action
+  | AssertReturn of action * result list
   | AssertTrap of action * string
   | AssertExhaustion of action * string
 
@@ -29,6 +37,7 @@ and command' =
   | Register of Ast.name * var option
   | Action of action
   | Assertion of assertion
+  | Thread of var option * action
   | Meta of meta
 
 and meta = meta' Source.phrase

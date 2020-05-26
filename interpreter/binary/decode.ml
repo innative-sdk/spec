@@ -1,5 +1,7 @@
 (* Decoding stream *)
 
+open Values
+
 type stream =
 {
   name : string;
@@ -94,7 +96,6 @@ let rec vsN n s =
   then (if b land 0x40 = 0 then x else Int64.(logor x (logxor (-1L) 0x7fL)))
   else Int64.(logor x (shift_left (vsN (n - 7) s) 7))
 
-let vu1 s = Int64.to_int (vuN 1 s)
 let vu32 s = Int64.to_int32 (vuN 32 s)
 let vs7 s = Int64.to_int (vsN 7 s)
 let vs32 s = Int64.to_int32 (vsN 32 s)
@@ -108,7 +109,11 @@ let len32 s =
   if I32.le_u n (Int32.of_int (len s)) then Int32.to_int n else
     error s pos "length out of bounds"
 
-let bool s = (vu1 s = 1)
+let bool2 s =
+  let n = u8 s in
+  require (n land 0xfc = 0) s (pos s - 1) "high six bits must be zero";
+  (n land 1 = 1), (n land 2 = 2)
+
 let string s = let n = len32 s in get_string n s
 let rec list f n s = if n = 0 then [] else let x = f s in x :: list f (n - 1) s
 let opt f b s = if b then Some (f s) else None
@@ -158,19 +163,20 @@ let func_type s =
   | _ -> error s (pos s - 1) "invalid function type"
 
 let limits vu s =
-  let has_max = bool s in
+  let has_max, flag = bool2 s in
   let min = vu s in
   let max = opt vu has_max s in
-  {min; max}
+  {min; max}, flag
 
 let table_type s =
   let t = elem_type s in
-  let lim = limits vu32 s in
+  let lim, shared = limits vu32 s in
+  require (not shared) s (pos s - 1) "tables can not be shared";
   TableType (lim, t)
 
 let memory_type s =
-  let lim = limits vu32 s in
-  MemoryType lim
+  let lim, shared = limits vu32 s in
+  MemoryType (lim, if shared then Shared else Unshared)
 
 let mutability s =
   match u8 s with
@@ -199,6 +205,86 @@ let memop s =
   require (I32.le_u align 32l) s (pos s - 1) "invalid memop flags";
   let offset = vu32 s in
   Int32.to_int align, offset
+
+let atomic_instr s =
+  let pos = pos s in
+  match op s with
+  | 0x00 -> let a, o = memop s in memory_atomic_notify a o
+  | 0x01 -> let a, o = memop s in memory_atomic_wait32 a o
+  | 0x02 -> let a, o = memop s in memory_atomic_wait64 a o
+
+  | 0x10 -> let a, o = memop s in i32_atomic_load a o
+  | 0x11 -> let a, o = memop s in i64_atomic_load a o
+  | 0x12 -> let a, o = memop s in i32_atomic_load8_u a o
+  | 0x13 -> let a, o = memop s in i32_atomic_load16_u a o
+  | 0x14 -> let a, o = memop s in i64_atomic_load8_u a o
+  | 0x15 -> let a, o = memop s in i64_atomic_load16_u a o
+  | 0x16 -> let a, o = memop s in i64_atomic_load32_u a o
+  | 0x17 -> let a, o = memop s in i32_atomic_store a o
+  | 0x18 -> let a, o = memop s in i64_atomic_store a o
+  | 0x19 -> let a, o = memop s in i32_atomic_store8 a o
+  | 0x1a -> let a, o = memop s in i32_atomic_store16 a o
+  | 0x1b -> let a, o = memop s in i64_atomic_store8 a o
+  | 0x1c -> let a, o = memop s in i64_atomic_store16 a o
+  | 0x1d -> let a, o = memop s in i64_atomic_store32 a o
+
+  | 0x1e -> let a, o = memop s in i32_atomic_rmw (I32 I32Op.RmwAdd) a o
+  | 0x1f -> let a, o = memop s in i64_atomic_rmw (I64 I64Op.RmwAdd) a o
+  | 0x20 -> let a, o = memop s in i32_atomic_rmw8_u (I32 I32Op.RmwAdd) a o
+  | 0x21 -> let a, o = memop s in i32_atomic_rmw16_u (I32 I32Op.RmwAdd) a o
+  | 0x22 -> let a, o = memop s in i64_atomic_rmw8_u (I64 I64Op.RmwAdd) a o
+  | 0x23 -> let a, o = memop s in i64_atomic_rmw16_u (I64 I64Op.RmwAdd) a o
+  | 0x24 -> let a, o = memop s in i64_atomic_rmw32_u (I64 I64Op.RmwAdd) a o
+
+  | 0x25 -> let a, o = memop s in i32_atomic_rmw (I32 I32Op.RmwSub) a o
+  | 0x26 -> let a, o = memop s in i64_atomic_rmw (I64 I64Op.RmwSub) a o
+  | 0x27 -> let a, o = memop s in i32_atomic_rmw8_u (I32 I32Op.RmwSub) a o
+  | 0x28 -> let a, o = memop s in i32_atomic_rmw16_u (I32 I32Op.RmwSub) a o
+  | 0x29 -> let a, o = memop s in i64_atomic_rmw8_u (I64 I64Op.RmwSub) a o
+  | 0x2a -> let a, o = memop s in i64_atomic_rmw16_u (I64 I64Op.RmwSub) a o
+  | 0x2b -> let a, o = memop s in i64_atomic_rmw32_u (I64 I64Op.RmwSub) a o
+
+  | 0x2c -> let a, o = memop s in i32_atomic_rmw (I32 I32Op.RmwAnd) a o
+  | 0x2d -> let a, o = memop s in i64_atomic_rmw (I64 I64Op.RmwAnd) a o
+  | 0x2e -> let a, o = memop s in i32_atomic_rmw8_u (I32 I32Op.RmwAnd) a o
+  | 0x2f -> let a, o = memop s in i32_atomic_rmw16_u (I32 I32Op.RmwAnd) a o
+  | 0x30 -> let a, o = memop s in i64_atomic_rmw8_u (I64 I64Op.RmwAnd) a o
+  | 0x31 -> let a, o = memop s in i64_atomic_rmw16_u (I64 I64Op.RmwAnd) a o
+  | 0x32 -> let a, o = memop s in i64_atomic_rmw32_u (I64 I64Op.RmwAnd) a o
+
+  | 0x33 -> let a, o = memop s in i32_atomic_rmw (I32 I32Op.RmwOr) a o
+  | 0x34 -> let a, o = memop s in i64_atomic_rmw (I64 I64Op.RmwOr) a o
+  | 0x35 -> let a, o = memop s in i32_atomic_rmw8_u (I32 I32Op.RmwOr) a o
+  | 0x36 -> let a, o = memop s in i32_atomic_rmw16_u (I32 I32Op.RmwOr) a o
+  | 0x37 -> let a, o = memop s in i64_atomic_rmw8_u (I64 I64Op.RmwOr) a o
+  | 0x38 -> let a, o = memop s in i64_atomic_rmw16_u (I64 I64Op.RmwOr) a o
+  | 0x39 -> let a, o = memop s in i64_atomic_rmw32_u (I64 I64Op.RmwOr) a o
+
+  | 0x3a -> let a, o = memop s in i32_atomic_rmw (I32 I32Op.RmwXor) a o
+  | 0x3b -> let a, o = memop s in i64_atomic_rmw (I64 I64Op.RmwXor) a o
+  | 0x3c -> let a, o = memop s in i32_atomic_rmw8_u (I32 I32Op.RmwXor) a o
+  | 0x3d -> let a, o = memop s in i32_atomic_rmw16_u (I32 I32Op.RmwXor) a o
+  | 0x3e -> let a, o = memop s in i64_atomic_rmw8_u (I64 I64Op.RmwXor) a o
+  | 0x3f -> let a, o = memop s in i64_atomic_rmw16_u (I64 I64Op.RmwXor) a o
+  | 0x40 -> let a, o = memop s in i64_atomic_rmw32_u (I64 I64Op.RmwXor) a o
+
+  | 0x41 -> let a, o = memop s in i32_atomic_rmw (I32 I32Op.RmwXchg) a o
+  | 0x42 -> let a, o = memop s in i64_atomic_rmw (I64 I64Op.RmwXchg) a o
+  | 0x43 -> let a, o = memop s in i32_atomic_rmw8_u (I32 I32Op.RmwXchg) a o
+  | 0x44 -> let a, o = memop s in i32_atomic_rmw16_u (I32 I32Op.RmwXchg) a o
+  | 0x45 -> let a, o = memop s in i64_atomic_rmw8_u (I64 I64Op.RmwXchg) a o
+  | 0x46 -> let a, o = memop s in i64_atomic_rmw16_u (I64 I64Op.RmwXchg) a o
+  | 0x47 -> let a, o = memop s in i64_atomic_rmw32_u (I64 I64Op.RmwXchg) a o
+
+  | 0x48 -> let a, o = memop s in i32_atomic_rmw_cmpxchg a o
+  | 0x49 -> let a, o = memop s in i64_atomic_rmw_cmpxchg a o
+  | 0x4a -> let a, o = memop s in i32_atomic_rmw8_u_cmpxchg a o
+  | 0x4b -> let a, o = memop s in i32_atomic_rmw16_u_cmpxchg a o
+  | 0x4c -> let a, o = memop s in i64_atomic_rmw8_u_cmpxchg a o
+  | 0x4d -> let a, o = memop s in i64_atomic_rmw16_u_cmpxchg a o
+  | 0x4e -> let a, o = memop s in i64_atomic_rmw32_u_cmpxchg a o
+
+  | b -> illegal s pos b
 
 let rec instr s =
   let pos = pos s in
@@ -431,6 +517,8 @@ let rec instr s =
   | 0xbd -> i64_reinterpret_f64
   | 0xbe -> f32_reinterpret_i32
   | 0xbf -> f64_reinterpret_i64
+
+  | 0xfe -> atomic_instr s
 
   | b -> illegal s pos b
 

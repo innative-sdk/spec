@@ -11,7 +11,8 @@ type pack_size = Pack8 | Pack16 | Pack32
 type extension = SX | ZX
 
 type memory' = (int, int8_unsigned_elt, c_layout) Array1.t
-type memory = {mutable content : memory'; max : size option}
+type memory =
+  {mutable content : memory'; max : size option; shared: sharability}
 type t = memory
 
 exception Type
@@ -27,6 +28,16 @@ let packed_size = function
   | Pack16 -> 2
   | Pack32 -> 4
 
+let packed_size_opt t sz =
+  match sz with
+  | None -> Types.size t
+  | Some s -> packed_size s
+
+let is_aligned a t sz =
+  let align = packed_size_opt t sz in
+  let mask = align - 1 in
+  Int64.(logand a (of_int mask)) = 0L
+
 let within_limits n = function
   | None -> true
   | Some max -> I32.le_u n max
@@ -40,9 +51,9 @@ let create n =
     mem
   with Out_of_memory -> raise OutOfMemory
 
-let alloc (MemoryType {min; max}) =
+let alloc (MemoryType ({min; max}, shared)) =
   assert (within_limits min max);
-  {content = create min; max}
+  {content = create min; max; shared}
 
 let bound mem =
   Array1_64.dim mem.content
@@ -51,7 +62,7 @@ let size mem =
   Int64.(to_int32 (div (bound mem) page_size))
 
 let type_of mem =
-  MemoryType {min = size mem; max = mem.max}
+  MemoryType ({min = size mem; max = mem.max}, mem.shared)
 
 let grow mem delta =
   let old_size = size mem in

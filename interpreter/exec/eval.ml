@@ -99,6 +99,10 @@ let take n (vs : 'a stack) at =
 let drop n (vs : 'a stack) at =
   try Lib.List.drop n vs with Failure _ -> Crash.error at "stack underflow"
 
+let check_align addr ty sz at =
+  if not (Memory.is_aligned addr ty sz) then
+    Trap.error at "unaligned atomic memory access"
+
 
 (* Evaluation *)
 
@@ -152,7 +156,7 @@ let rec step (c : config) : config =
         vs', [Plain (Br (Lib.List32.nth xs i)) @@ e.at]
 
       | Return, vs ->
-        vs, [Returning vs @@ e.at]
+        [], [Returning vs @@ e.at]
 
       | Call x, vs ->
         vs, [Invoke (func frame.inst x) @@ e.at]
@@ -213,6 +217,83 @@ let rec step (c : config) : config =
           );
           vs', []
         with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at]);
+
+      | AtomicLoad {offset; ty; sz; _}, I32 i :: vs' ->
+        let mem = memory frame.inst (0l @@ e.at) in
+        let addr = I64_convert.extend_i32_u i in
+        (try
+          check_align addr ty sz e.at;
+          let v =
+            match sz with
+            | None -> Memory.load_value mem addr offset ty
+            | Some sz -> Memory.load_packed sz Memory.ZX mem addr offset ty
+          in v :: vs', []
+        with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at])
+
+      | AtomicStore {offset; ty; sz; _}, v :: I32 i :: vs' ->
+        let mem = memory frame.inst (0l @@ e.at) in
+        let addr = I64_convert.extend_i32_u i in
+        (try
+          check_align addr ty sz e.at;
+          (match sz with
+          | None -> Memory.store_value mem addr offset v
+          | Some sz -> Memory.store_packed sz mem addr offset v
+          );
+          vs', []
+        with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at]);
+
+      | AtomicRmw (rmwop, {offset; ty; sz; _}), v :: I32 i :: vs' ->
+        let mem = memory frame.inst (0l @@ e.at) in
+        let addr = I64_convert.extend_i32_u i in
+        (try
+          check_align addr ty sz e.at;
+          let v1 =
+            match sz with
+            | None -> Memory.load_value mem addr offset ty
+            | Some sz -> Memory.load_packed sz Memory.ZX mem addr offset ty
+          in let v2 = Eval_numeric.eval_rmwop rmwop v1 v
+          in (match sz with
+          | None -> Memory.store_value mem addr offset v2
+          | Some sz -> Memory.store_packed sz mem addr offset v2
+          );
+          v1 :: vs', []
+        with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at])
+
+      | AtomicRmwCmpXchg {offset; ty; sz; _}, vn :: ve :: I32 i :: vs' ->
+        let mem = memory frame.inst (0l @@ e.at) in
+        let addr = I64_convert.extend_i32_u i in
+        (try
+          check_align addr ty sz e.at;
+          let v1 =
+            match sz with
+            | None -> Memory.load_value mem addr offset ty
+            | Some sz -> Memory.load_packed sz Memory.ZX mem addr offset ty
+          in (if v1 = ve then
+                match sz with
+                | None -> Memory.store_value mem addr offset vn
+                | Some sz -> Memory.store_packed sz mem addr offset vn
+          );
+          v1 :: vs', []
+        with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at]);
+
+      | MemoryAtomicWait {offset; ty; sz; _}, I64 timeout :: ve :: I32 i :: vs' ->
+        let mem = memory frame.inst (0l @@ e.at) in
+        let addr = I64_convert.extend_i32_u i in
+        (try
+          assert (sz = None);
+          check_align addr ty sz e.at;
+          let v = Memory.load_value mem addr offset ty in
+          if v = ve then
+            assert false  (* TODO *)
+          else
+            I32 1l :: vs', []  (* Not equal *)
+        with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at])
+
+      | MemoryAtomicNotify x, I32 count :: I32 i :: vs' ->
+          if count = 0l then
+            I32 0l :: vs', []  (* Trivial case waking 0 waiters *)
+          else
+            assert false  (* TODO *)
 
       | MemorySize, vs ->
         let mem = memory frame.inst (0l @@ e.at) in

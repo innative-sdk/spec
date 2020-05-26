@@ -30,8 +30,8 @@ let handler = {
 };
 let registry = new Proxy({spectest}, handler);
 
-function register(name, instance) {
-  registry[name] = instance.exports;
+function register(name, instanceObj) {
+  registry[name] = instanceObj.instance.exports;
 }
 
 function module(bytes, valid = true) {
@@ -53,20 +53,22 @@ function module(bytes, valid = true) {
 }
 
 function instance(bytes, imports = registry) {
-  return new WebAssembly.Instance(module(bytes), imports);
+  const mod = module(bytes);
+  const instance = new WebAssembly.Instance(mod, imports);
+  return {module: mod, instance};
 }
 
-function call(instance, name, args) {
-  return instance.exports[name](...args);
+function call(instanceObj, name, args) {
+  return instanceObj.instance.exports[name](...args);
 }
 
-function get(instance, name) {
-  let v = instance.exports[name];
+function get(instanceObj, name) {
+  let v = instanceObj.instance.exports[name];
   return (v instanceof WebAssembly.Global) ? v.value : v;
 }
 
-function exports(name, instance) {
-  return {[name]: instance.exports};
+function exports(name, instanceObj) {
+  return {[name]: instanceObj.instance.exports};
 }
 
 function run(action) {
@@ -122,27 +124,21 @@ function assert_exhaustion(action) {
 
 function assert_return(action, expected) {
   let actual = action();
-  if (!Object.is(actual, expected)) {
-    throw new Error("Wasm return value " + expected + " expected, got " + actual);
-  };
-}
-
-function assert_return_canonical_nan(action) {
-  let actual = action();
-  // Note that JS can't reliably distinguish different NaN values,
-  // so there's no good way to test that it's a canonical NaN.
-  if (!Number.isNaN(actual)) {
-    throw new Error("Wasm return value NaN expected, got " + actual);
-  };
-}
-
-function assert_return_arithmetic_nan(action) {
-  // Note that JS can't reliably distinguish different NaN values,
-  // so there's no good way to test for specific bitpatterns here.
-  let actual = action();
-  if (!Number.isNaN(actual)) {
-    throw new Error("Wasm return value NaN expected, got " + actual);
-  };
+  switch (expected) {
+    case "nan:canonical":
+    case "nan:arithmetic":
+    case "nan:any":
+      // Note that JS can't reliably distinguish different NaN values,
+      // so there's no good way to test that it's a canonical NaN.
+      if (!Number.isNaN(actual)) {
+        throw new Error("Wasm return value NaN expected, got " + actual);
+      };
+      return;
+    default:
+      if (!Object.is(actual, expected)) {
+        throw new Error("Wasm return value " + expected + " expected, got " + actual);
+      };
+  }
 }
 |}
 
@@ -220,36 +216,38 @@ let get t at =
 let run ts at =
   [], []
 
-let assert_return lits ts at =
-  let test lit =
-    let t', reinterpret = reinterpret_of (Values.type_of lit.it) in
-    [ reinterpret @@ at;
-      Const lit @@ at;
-      reinterpret @@ at;
-      Compare (eq_of t') @@ at;
-      Test (Values.I32 I32Op.Eqz) @@ at;
-      BrIf (0l @@ at) @@ at ]
-  in [], List.flatten (List.rev_map test lits)
-
-let assert_return_nan_bitpattern nan_bitmask_of ts at =
-  let test t =
-    let t', reinterpret = reinterpret_of t in
-    [ reinterpret @@ at;
-      Const (nan_bitmask_of t' @@ at) @@ at;
-      Binary (and_of t') @@ at;
-      Const (canonical_nan_of t' @@ at) @@ at;
-      Compare (eq_of t') @@ at;
-      Test (Values.I32 I32Op.Eqz) @@ at;
-      BrIf (0l @@ at) @@ at ]
-  in [], List.flatten (List.rev_map test ts)
-
-let assert_return_canonical_nan =
-  (* The result may only differ from the canonical NaN in its sign bit *)
-  assert_return_nan_bitpattern abs_mask_of
-
-let assert_return_arithmetic_nan =
-  (* The result can be any NaN that's one everywhere the canonical NaN is one *)
-  assert_return_nan_bitpattern canonical_nan_of
+let assert_return ress ts at =
+  let test res =
+    match res.it with
+    | LitResult lit ->
+      let t', reinterpret = reinterpret_of (Values.type_of lit.it) in
+      [ reinterpret @@ at;
+        Const lit @@ at;
+        reinterpret @@ at;
+        Compare (eq_of t') @@ at;
+        Test (Values.I32 I32Op.Eqz) @@ at;
+        BrIf (0l @@ at) @@ at ]
+    | NanResult nanop ->
+      let nan =
+        match nanop.it with
+        | Values.I32 _ | Values.I64 _ -> assert false
+        | Values.F32 n | Values.F64 n -> n
+      in
+      let nan_bitmask_of =
+        match nan with
+        | CanonicalNan -> abs_mask_of (* must only differ from the canonical NaN in its sign bit *)
+        | ArithmeticNan -> canonical_nan_of (* can be any NaN that's one everywhere the canonical NaN is one *)
+      in
+      let t = Values.type_of nanop.it in
+      let t', reinterpret = reinterpret_of t in
+      [ reinterpret @@ at;
+        Const (nan_bitmask_of t' @@ at) @@ at;
+        Binary (and_of t') @@ at;
+        Const (canonical_nan_of t' @@ at) @@ at;
+        Compare (eq_of t') @@ at;
+        Test (Values.I32 I32Op.Eqz) @@ at;
+        BrIf (0l @@ at) @@ at ]
+  in [], List.flatten (List.rev_map test ress)
 
 let wrap module_name item_name wrap_action wrap_assertion at =
   let itypes, idesc, action = wrap_action at in
@@ -321,6 +319,18 @@ let of_literal lit =
   | Values.F32 z -> of_float (F32.to_float z)
   | Values.F64 z -> of_float (F64.to_float z)
 
+let of_nan = function
+  | CanonicalNan -> "nan:canonical"
+  | ArithmeticNan -> "nan:arithmetic"
+
+let of_result res =
+  match res.it with
+  | LitResult lit -> of_literal lit
+  | NanResult nanop ->
+    match nanop.it with
+    | Values.I32 _ | Values.I64 _ -> assert false
+    | Values.F32 n | Values.F64 n -> of_nan n
+
 let rec of_definition def =
   match def.it with
   | Textual m -> of_bytes (Encode.encode m)
@@ -354,6 +364,9 @@ let of_action mods act =
       Some (of_wrapper mods x_opt name (get gt), [t])
     | _ -> None
     )
+  (* TODO(binji): *)
+  | Join x ->
+    assert false
 
 let of_assertion' mods act name args wrapper_opt =
   let act_js, act_wrapper_opt = of_action mods act in
@@ -377,17 +390,16 @@ let of_assertion mods ass =
     "assert_unlinkable(" ^ of_definition def ^ ");"
   | AssertUninstantiable (def, _) ->
     "assert_uninstantiable(" ^ of_definition def ^ ");"
-  | AssertReturn (act, lits) ->
-    of_assertion' mods act "assert_return" (List.map of_literal lits)
-      (Some (assert_return lits))
-  | AssertReturnCanonicalNaN act ->
-    of_assertion' mods act "assert_return_canonical_nan" [] (Some assert_return_canonical_nan)
-  | AssertReturnArithmeticNaN act ->
-    of_assertion' mods act "assert_return_arithmetic_nan" [] (Some assert_return_arithmetic_nan)
+  | AssertReturn (act, ress) ->
+    of_assertion' mods act "assert_return" (List.map of_result ress)
+      (Some (assert_return ress))
   | AssertTrap (act, _) ->
     of_assertion' mods act "assert_trap" [] None
   | AssertExhaustion (act, _) ->
     of_assertion' mods act "assert_exhaustion" [] None
+
+(* TODO(binji): *)
+let of_thread mods x_opt act = assert false
 
 let of_command mods cmd =
   "\n// " ^ Filename.basename cmd.at.left.file ^
@@ -409,6 +421,8 @@ let of_command mods cmd =
     of_assertion' mods act "run" [] None ^ "\n"
   | Assertion ass ->
     of_assertion mods ass ^ "\n"
+  | Thread (x_opt, act) ->
+    of_thread mods x_opt act ^ "\n"
   | Meta _ -> assert false
 
 let of_script scr =

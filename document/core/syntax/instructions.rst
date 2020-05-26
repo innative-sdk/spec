@@ -129,9 +129,9 @@ For each type, several subcategories can be distinguished:
 
 * *Constants*: return a static constant.
 
-* *Unary Operators*: consume one operand and produce one result of the respective type.
+* *Unary Operations*: consume one operand and produce one result of the respective type.
 
-* *Binary Operators*: consume two operands and produce one result of the respective type.
+* *Binary Operations*: consume two operands and produce one result of the respective type.
 
 * *Tests*: consume one operand of the respective type and produce a Boolean integer result.
 
@@ -184,9 +184,9 @@ Instructions in this group can operate on operands of any :ref:`value type <synt
      \SELECT
    \end{array}
 
-The |DROP| operator simply throws away a single operand.
+The |DROP| instruction simply throws away a single operand.
 
-The |SELECT| operator selects one of its first two operands based on whether its third operand is zero or not.
+The |SELECT| instruction selects one of its first two operands based on whether its third operand is zero or not.
 
 
 .. index:: ! variable instruction, local, global, local index, global index
@@ -265,6 +265,72 @@ Both instructions operate in units of :ref:`page size <page-size>`.
    In the current version of WebAssembly,
    all memory instructions implicitly operate on :ref:`memory <syntax-mem>` :ref:`index <syntax-memidx>` :math:`0`.
    This restriction may be lifted in future versions.
+
+.. index:: ! atomic memory instruction, ! rmw
+   pair: abstract syntax; instruction
+.. _syntax-atomicop:
+.. _syntax-instr-atomic-memory:
+
+Atomic Memory Instructions
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Instructions in this group are concerned with accessing :ref:`linear memory <syntax-mem>` atomically.
+
+.. math::
+   \begin{array}{llll}
+   \production{atomic operator} & \atomicop &::=&
+     \ATOMICADD ~|~
+     \ATOMICSUB ~|~
+     \ATOMICAND ~|~
+     \ATOMICOR ~|~
+     \ATOMICXOR ~|~
+     \ATOMICXCHG \\
+   \production{instruction} & \instr &::=&
+     \dots ~|~ \\&&&
+     \MEMORYATOMICNOTIFY~\memarg ~|~ \\&&&
+     \MEMORYATOMICWAIT\X{nn}~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICLOAD~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICSTORE~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICLOAD\K{8\_u}~\memarg ~|~
+     \K{i}\X{nn}\K{.}\ATOMICLOAD\K{16\_u}~\memarg ~|~
+     \K{i64.}\ATOMICLOAD\K{32\_u}~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICSTORE\K{8}~\memarg ~|~
+     \K{i}\X{nn}\K{.}\ATOMICSTORE\K{16}~\memarg ~|~
+     \K{i64.}\ATOMICSTORE\K{32}~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICRMW\K{.}\atomicop~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICRMW\K{8.}\atomicop\K{\_u}~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICRMW\K{16.}\atomicop\K{\_u}~\memarg ~|~ \\&&&
+     \K{i64.}\ATOMICRMW\K{32.}\atomicop\K{\_u}~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICRMW\K{.}\ATOMICCMPXCHG~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICRMW\K{8.}\ATOMICCMPXCHG\K{\_u}~\memarg ~|~ \\&&&
+     \K{i}\X{nn}\K{.}\ATOMICRMW\K{16.}\ATOMICCMPXCHG\K{\_u}~\memarg ~|~ \\&&&
+     \K{i64.}\ATOMICRMW\K{32.}\ATOMICCMPXCHG\K{\_u}~\memarg \\
+   \end{array}
+
+Memory is accessed atomically using the |ATOMICLOAD|, |ATOMICSTORE|, and
+|ATOMICRMW| instructions. All instructions take a *memory immediate*
+|memarg|, just like their non-atomic equivalents. Unlike non-atomic memory
+access instructions, only integer :ref:`value types <syntax-valtype>` can be
+used. Also unlike non-atomic memory access instructions, there are no
+sign extension modes; atomic memory accesses are always zero-extending.
+
+The |ATOMICRMW| instructions are `read-modify-write <https://en.wikipedia.org/wiki/Read-modify-write>`_
+instructions. They each have an :ref:`atomicop <syntax-atomicop>`, which
+specifies how memory will be modified. Each instruction returns the value read
+from memory before modification. The |ATOMICXCHG| :ref:`atomicop <syntax-atomicop>`
+doesn't use the read value, but instead stores its argument unmodified. The
+|ATOMICCMPXCHG| :ref:`atomicop <syntax-atomicop>` is similar, but only performs
+this action conditionally, if the read value is equal to a provided comparison
+argument. All other :ref:`atomicops <syntax-atomicop>` have behavior of the
+:ref:`ibinop <syntax-ibinop>` of the same name.
+
+The |MEMORYATOMICWAIT| and |MEMORYATOMICNOTIFY| instructions provide primitive
+synchronization between :ref:`threads <syntax-thread>`. The |MEMORYATOMICWAIT|
+instructions atomically load a value from the calculated effective address and
+compare it to an expected value. If they are equal, the thread is then
+suspended until a given timeout expires or another thread wakes it. The
+|MEMORYATOMICNOTIFY| instruction wakes threads that are waiting on a given
+address, up to a given maximum.
 
 
 .. index:: ! control instruction, ! structured control, ! label, ! block, ! branch, ! unwinding, result type, label index, function index, type index, vector, trap, function, table, function type
