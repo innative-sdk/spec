@@ -450,7 +450,15 @@
     (if (param i32 i32) (result i32 i32) (local.get 0) (then (br 0)))
     (i32.add)
   )
-
+  (func (export "params-diff") (param i32) (result i32)
+    (i32.const 1)
+    (f64.const 2)
+    (if (param i32 f64) (result i32) (local.get 0)
+      (then (drop) (i32.const 2) (i32.add))
+      (else (f64.const 1) (f64.sub) (drop))
+    )
+  )
+  
   (func (export "effects") (param i32) (result i32)
     (local i32)
     (if
@@ -664,6 +672,9 @@
 (assert_return (invoke "params-break" (i32.const 1)) (i32.const 3))
 (assert_return (invoke "params-id-break" (i32.const 0)) (i32.const 3))
 (assert_return (invoke "params-id-break" (i32.const 1)) (i32.const 3))
+(assert_return (invoke "params-diff" (i32.const 0)) (i32.const 1))
+(assert_return (invoke "params-diff" (i32.const 1)) (i32.const 3))
+
 
 (assert_return (invoke "effects" (i32.const 1)) (i32.const -14))
 (assert_return (invoke "effects" (i32.const 0)) (i32.const -6))
