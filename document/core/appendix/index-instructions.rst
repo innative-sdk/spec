@@ -4,27 +4,27 @@
 Index of Instructions
 ---------------------
 
-===========================================================  =========================  ==========================================  =============================================  ===============================================================
+
 Instruction                                                  Binary Opcode              Type                                        Validation                                     Execution
 ===========================================================  =========================  ==========================================  =============================================  ===============================================================
 :math:`\UNREACHABLE`                                         :math:`\hex{00}`           :math:`[t_1^\ast] \to [t_2^\ast]`           :ref:`validation <valid-unreachable>`          :ref:`execution <exec-unreachable>`
 :math:`\NOP`                                                 :math:`\hex{01}`           :math:`[] \to []`                           :ref:`validation <valid-nop>`                  :ref:`execution <exec-nop>`
-:math:`\BLOCK~[t^?]`                                         :math:`\hex{02}`           :math:`[] \to [t^\ast]`                     :ref:`validation <valid-block>`                :ref:`execution <exec-block>`
-:math:`\LOOP~[t^?]`                                          :math:`\hex{03}`           :math:`[] \to [t^\ast]`                     :ref:`validation <valid-loop>`                 :ref:`execution <exec-loop>`
-:math:`\IF~[t^?]`                                            :math:`\hex{04}`           :math:`[\I32] \to [t^\ast]`                 :ref:`validation <valid-if>`                   :ref:`execution <exec-if>`
-:math:`\ELSE`                                                :math:`\hex{05}`                                                         
-(reserved)                                                   :math:`\hex{06}`                                                           
-(reserved)                                                   :math:`\hex{07}`                                                           
-(reserved)                                                   :math:`\hex{08}`                                                           
-(reserved)                                                   :math:`\hex{09}`                                                           
-(reserved)                                                   :math:`\hex{0A}`                                                           
-:math:`\END`                                                 :math:`\hex{0B}`                                                           
-:math:`\BR~l`                                                :math:`\hex{0C}`           :math:`[t_1^\ast~t^?] \to [t_2^\ast]`       :ref:`validation <valid-br>`                   :ref:`execution <exec-br>`
-:math:`\BRIF~l`                                              :math:`\hex{0D}`           :math:`[t^?~\I32] \to [t^?]`                :ref:`validation <valid-br_if>`                :ref:`execution <exec-br_if>`
-:math:`\BRTABLE~l^\ast~l`                                    :math:`\hex{0E}`           :math:`[t_1^\ast~t^?~\I32] \to [t_2^\ast]`  :ref:`validation <valid-br_table>`             :ref:`execution <exec-br_table>`
-:math:`\RETURN`                                              :math:`\hex{0F}`           :math:`[t_1^\ast~t^?] \to [t_2^\ast]`       :ref:`validation <valid-return>`               :ref:`execution <exec-return>`
-:math:`\CALL~x`                                              :math:`\hex{10}`           :math:`[t_1^\ast] \to [t_2^\ast]`           :ref:`validation <valid-call>`                 :ref:`execution <exec-call>`
-:math:`\CALLINDIRECT~x`                                      :math:`\hex{11}`           :math:`[t_1^\ast~\I32] \to [t_2^\ast]`      :ref:`validation <valid-call_indirect>`        :ref:`execution <exec-call_indirect>`
+:math:`\BLOCK~\X{bt}`                                        :math:`\hex{02}`           :math:`[t_1^\ast] \to [t_2^\ast]`           :ref:`validation <valid-block>`                :ref:`execution <exec-block>`
+:math:`\LOOP~\X{bt}`                                         :math:`\hex{03}`           :math:`[t_1^\ast] \to [t_2^\ast]`           :ref:`validation <valid-loop>`                 :ref:`execution <exec-loop>`
+:math:`\IF~\X{bt}`                                           :math:`\hex{04}`           :math:`[t_1^\ast] \to [t_2^\ast]`           :ref:`validation <valid-if>`                   :ref:`execution <exec-if>`
+:math:`\ELSE`                                                :math:`\hex{05}`                                                
+(reserved)                                                   :math:`\hex{06}`                                                  
+(reserved)                                                   :math:`\hex{07}`                                                  
+(reserved)                                                   :math:`\hex{08}`                                                  
+(reserved)                                                   :math:`\hex{09}`                                                  
+(reserved)                                                   :math:`\hex{0A}`                                                  
+:math:`\END`                                                 :math:`\hex{0B}`                                                  
+:math:`\BR~l`                                                :math:`\hex{0C}`           :math:`[t_1^\ast~t^\ast] \to [t_2^\ast]`      :ref:`validation <valid-br>`                 :ref:`execution <exec-br>`
+:math:`\BRIF~l`                                              :math:`\hex{0D}`           :math:`[t^\ast~\I32] \to [t^\ast]`            :ref:`validation <valid-br_if>`              :ref:`execution <exec-br_if>`
+:math:`\BRTABLE~l^\ast~l`                                    :math:`\hex{0E}`           :math:`[t_1^\ast~t^\ast~\I32] \to [t_2^\ast]` :ref:`validation <valid-br_table>`           :ref:`execution <exec-br_table>`
+:math:`\RETURN`                                              :math:`\hex{0F}`           :math:`[t_1^\ast~t^\ast] \to [t_2^\ast]`      :ref:`validation <valid-return>`             :ref:`execution <exec-return>`
+:math:`\CALL~x`                                              :math:`\hex{10}`           :math:`[t_1^\ast] \to [t_2^\ast]`             :ref:`validation <valid-call>`               :ref:`execution <exec-call>`
+:math:`\CALLINDIRECT~x`                                      :math:`\hex{11}`           :math:`[t_1^\ast~\I32] \to [t_2^\ast]`        :ref:`validation <valid-call_indirect>`      :ref:`execution <exec-call_indirect>`
 (reserved)                                                   :math:`\hex{12}`                                                           
 (reserved)                                                   :math:`\hex{13}`                                                           
 (reserved)                                                   :math:`\hex{14}`                                                           

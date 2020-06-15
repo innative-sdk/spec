@@ -99,6 +99,7 @@ let rec vsN n s =
 let vu32 s = Int64.to_int32 (vuN 32 s)
 let vs7 s = Int64.to_int (vsN 7 s)
 let vs32 s = Int64.to_int32 (vsN 32 s)
+let vs33 s = I32_convert.wrap_i64 (vsN 33 s)
 let vs64 s = vsN 64 s
 let f32 s = F32.of_bits (u32 s)
 let f64 s = F64.of_bits (u64 s)
@@ -122,7 +123,7 @@ let vec f s = let n = len32 s in list f n s
 let name s =
   let pos = pos s in
   try Utf8.decode (string s) with Utf8.Utf8 ->
-    error s pos "invalid UTF-8 encoding"
+    error s pos "malformed UTF-8 encoding"
 
 let sized f s =
   let size = len32 s in
@@ -142,25 +143,21 @@ let value_type s =
   | -0x02 -> I64Type
   | -0x03 -> F32Type
   | -0x04 -> F64Type
-  | _ -> error s (pos s - 1) "invalid value type"
+  | _ -> error s (pos s - 1) "malformed value type"
 
 let elem_type s =
   match vs7 s with
   | -0x10 -> FuncRefType
-  | _ -> error s (pos s - 1) "invalid element type"
+  | _ -> error s (pos s - 1) "malformed element type"
 
-let stack_type s =
-  match peek s with
-  | Some 0x40 -> skip 1 s; []
-  | _ -> [value_type s]
-
+let stack_type s = vec value_type s
 let func_type s =
   match vs7 s with
   | -0x20 ->
-    let ins = vec value_type s in
-    let out = vec value_type s in
+    let ins = stack_type s in
+    let out = stack_type s in
     FuncType (ins, out)
-  | _ -> error s (pos s - 1) "invalid function type"
+  | _ -> error s (pos s - 1) "malformed function type"
 
 let limits vu s =
   let has_max, flag = bool2 s in
@@ -182,7 +179,7 @@ let mutability s =
   match u8 s with
   | 0 -> Immutable
   | 1 -> Mutable
-  | _ -> error s (pos s - 1) "invalid mutability"
+  | _ -> error s (pos s - 1) "malformed mutability"
 
 let global_type s =
   let t = value_type s in
@@ -290,6 +287,12 @@ let atomic_instr s =
 
   | b -> illegal s pos b
 
+let block_type s =
+  match peek s with
+  | Some 0x40 -> skip 1 s; ValBlockType None
+  | Some b when b land 0xc0 = 0x40 -> ValBlockType (Some (value_type s))
+  | _ -> VarBlockType (at vs33 s)
+
 let rec instr s =
   let pos = pos s in
   match op s with
@@ -297,26 +300,26 @@ let rec instr s =
   | 0x01 -> nop
 
   | 0x02 ->
-    let ts = stack_type s in
+    let bt = block_type s in
     let es' = instr_block s in
     end_ s;
-    block ts es'
+    block bt es'
   | 0x03 ->
-    let ts = stack_type s in
+    let bt = block_type s in
     let es' = instr_block s in
     end_ s;
-    loop ts es'
+    loop bt es'
   | 0x04 ->
-    let ts = stack_type s in
+    let bt = block_type s in
     let es1 = instr_block s in
     if peek s = Some 0x05 then begin
       expect 0x05 s "ELSE or END opcode expected";
       let es2 = instr_block s in
       end_ s;
-      if_ ts es1 es2
+      if_ bt es1 es2
     end else begin
       end_ s;
-      if_ ts es1 []
+      if_ bt es1 []
     end
 
   | 0x05 -> error s pos "misplaced ELSE opcode"
@@ -555,7 +558,7 @@ let id s =
     | 9 -> `ElemSection
     | 10 -> `CodeSection
     | 11 -> `DataSection
-    | _ -> error s (pos s) "invalid section id"
+    | _ -> error s (pos s) "malformed section id"
     ) bo
 
 let section_with_size tag f default s =
@@ -583,7 +586,7 @@ let import_desc s =
   | 0x01 -> TableImport (table_type s)
   | 0x02 -> MemoryImport (memory_type s)
   | 0x03 -> GlobalImport (global_type s)
-  | _ -> error s (pos s - 1) "invalid import kind"
+  | _ -> error s (pos s - 1) "malformed import kind"
 
 let import s =
   let module_name = name s in
@@ -640,7 +643,7 @@ let export_desc s =
   | 0x01 -> TableExport (at var s)
   | 0x02 -> MemoryExport (at var s)
   | 0x03 -> GlobalExport (at var s)
-  | _ -> error s (pos s - 1) "invalid export kind"
+  | _ -> error s (pos s - 1) "malformed export kind"
 
 let export s =
   let name = name s in
