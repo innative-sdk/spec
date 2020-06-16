@@ -223,10 +223,17 @@ op:
   local.tee <var>
   global.get <var>
   global.set <var>
+  table.copy
+  table.init <var>
+  elem.drop <var>
   <val_type>.load((8|16|32)_<sign>)? <offset>? <align>?
   <val_type>.store(8|16|32)? <offset>? <align>?
   memory.size
   memory.grow
+  memory.fill
+  memory.copy
+  memory.init <var>
+  data.drop <var>
   <val_type>.const <value>
   <val_type>.<unop>
   <val_type>.<binop>
@@ -309,7 +316,6 @@ script: <cmd>*
 cmd:
   <module>                                   ;; define, validate, and initialize module
   ( register <string> <name>? )              ;; register module for imports
-module with given failure string
   <action>                                   ;; perform action and print results
   <assertion>                                ;; assert result of an action
   ( thread <name>? <action> )                ;; spawn a new thread and run an action
@@ -372,7 +378,6 @@ binscript: <cmd>*
 cmd:
   <module>                                   ;; define, validate, and initialize module
   ( register <string> <name>? )              ;; register module for imports
-module with given failure string
   <action>                                   ;; perform action and print results
   <assertion>                                ;; assert result of an action
 
