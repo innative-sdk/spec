@@ -28,5 +28,5 @@ os: linux
 
 env:
   global:
-    - ENCRYPTION_LABEL: "85778253acbe"
+    - ENCRYPTION_LABEL: "2cede2ad97c0"
     - COMMIT_AUTHOR_EMAIL: "noreply@webassembly.org"
